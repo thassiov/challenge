@@ -14,7 +14,7 @@
     "dev": "nodemon",
     "lint": "eslint \"src/**/*.ts\" --fix",
     "build": "npm run build:clear && npm run build:bundle",
-    "build:bundle": "esbuild ./src/index.ts --bundle --tsconfig=./tsconfig.build.json --outfile=./dist/index.js",
+    "build:bundle": "esbuild ./src/index.ts --bundle --platform=node --target=node20 --tsconfig=./tsconfig.build.json --outfile=./dist/index.js",
     "build:clear": "rimraf ./dist"
   },
   "keywords": [
@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "axios": "^1.6.2",
+    "body-parser": "^1.20.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-async-handler": "^1.2.0",

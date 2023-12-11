@@ -10,21 +10,21 @@ export class GithubService implements IGithubService {
     this.ghAPI = new GithubAPI();
   }
 
-  async getUserRepository(username: GithubUsername): Promise<UserRepository[]> {
+  async getUserRepository(username: GithubUsername, accessToken?: string): Promise<UserRepository[]> {
     if (!githubUsernameSchema.safeParse(username).success) {
       logger.error('Username provided is not valid', { data: username });
       throw new ValidationError('Username provided is not valid', { data: username });
     }
 
     try {
-      const repos = await this.ghAPI.getUserRepository(username) as RepositoryRecord[];
+      const repos = await this.ghAPI.getUserRepository(username, accessToken) as RepositoryRecord[];
 
       if (!repos.length) {
         return [];
       }
 
       const promisedRepoInfo = repos.map(async (repo) => {
-        const branches = await this.getRepositoryBranches(username, repo.name as string);
+        const branches = await this.getRepositoryBranches(username, repo.name as string, accessToken);
         return {
           branches,
           repositoryName: repo.name as string,
@@ -41,8 +41,8 @@ export class GithubService implements IGithubService {
     }
   }
 
-  private async getRepositoryBranches(username: GithubUsername, repo: GithubRepositoryName): Promise<RepositoryBranch[]> {
-    const result = await this.ghAPI.getRepositoryBranches(username, repo);
+  private async getRepositoryBranches(username: GithubUsername, repo: GithubRepositoryName, accessToken = ''): Promise<RepositoryBranch[]> {
+    const result = await this.ghAPI.getRepositoryBranches(username, repo, accessToken);
 
     if (!result.length) {
       return [];
@@ -55,10 +55,13 @@ export class GithubService implements IGithubService {
 }
 
 export class GithubAPI implements IGithubAPI {
-  private readonly BASE_URL = 'https://api.github.com/';
-  private readonly DEFAULT_ACCEPT_HEADER = {'Accept': 'application/vnd.github+json'};
+  private readonly BASE_URL = 'https://api.github.com';
+  private readonly DEFAULT_HEADERS = {
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
 
-  async getUserRepository(username: GithubUsername, reposPerPage = 30): Promise<RepositoryRecord[]> {
+  async getUserRepository(username: GithubUsername, accessToken = '', reposPerPage = 30): Promise<RepositoryRecord[]> {
     if (!githubUsernameSchema.safeParse(username).success) {
       logger.error('Username provided is not valid', { data: username });
       throw new ValidationError('Username provided is not valid', { data: username });
@@ -66,15 +69,21 @@ export class GithubAPI implements IGithubAPI {
 
     try {
       const url = `${this.BASE_URL}/users/${username}/repos?per_page=${reposPerPage}&type=owner`;
-      const { data, headers } = await makeGetRequest(url, { headers: { ...this.DEFAULT_ACCEPT_HEADER } });
 
-      let hasNextPage = this.returnNextPageIfPresent(headers as AxiosResponseHeaders);
+      const auth = accessToken ? { 'Authorization': `${accessToken}` } : {};
+      const headersToSend = {
+        ...this.DEFAULT_HEADERS,
+        ...auth,
+      };
 
-      if (hasNextPage) {
-        while(hasNextPage) {
-          const { data: newPageData, headers } = await makeGetRequest(url, { headers: { ...this.DEFAULT_ACCEPT_HEADER } });
-          data.concat(newPageData);
-          hasNextPage = this.returnNextPageIfPresent(headers as AxiosResponseHeaders);
+      const { data, headers } = await makeGetRequest(url, { headers: headersToSend });
+
+      const pages = this.returnPaginationCounter(headers as AxiosResponseHeaders);
+
+      if (pages) {
+        for (let index = 2; index < pages; index++) {
+          const { data: newPageData } = await makeGetRequest(`${url}&page=${index}`, { headers: headersToSend });
+          Array.prototype.push.apply(data, newPageData);
         }
       }
 
@@ -85,7 +94,7 @@ export class GithubAPI implements IGithubAPI {
     }
   }
 
-  async getRepositoryBranches(username: GithubUsername, repoName: GithubRepositoryName, branchesPerPage = 30): Promise<BranchRecord[]> {
+  async getRepositoryBranches(username: GithubUsername, repoName: GithubRepositoryName, accessToken = '', branchesPerPage = 30): Promise<BranchRecord[]> {
     if (!githubUsernameSchema.safeParse(username).success) {
       logger.error('Username provided is not valid', { data: username });
       throw new ValidationError('Username provided is not valid', { data: username });
@@ -98,15 +107,20 @@ export class GithubAPI implements IGithubAPI {
 
     try {
       const url = `${this.BASE_URL}/repos/${username}/${repoName}/branches?per_page=${branchesPerPage}`;
-      const { data, headers } = await makeGetRequest(url, { headers: { ...this.DEFAULT_ACCEPT_HEADER } });
+      const auth = accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {};
+      const headersToSend = {
+        ...this.DEFAULT_HEADERS,
+        ...auth,
+      };
 
-      let hasNextPage = this.returnNextPageIfPresent(headers as AxiosResponseHeaders);
+      const { data, headers } = await makeGetRequest(url, { headers: headersToSend });
 
-      if (hasNextPage) {
-        while(hasNextPage) {
-          const { data: newPageData, headers } = await makeGetRequest(url, { headers: { ...this.DEFAULT_ACCEPT_HEADER } });
-          data.concat(newPageData);
-          hasNextPage = this.returnNextPageIfPresent(headers as AxiosResponseHeaders);
+      const pages = this.returnPaginationCounter(headers as AxiosResponseHeaders);
+
+      if (pages) {
+        for (let index = 2; index < pages; index++) {
+          const { data: newPageData } = await makeGetRequest(`${url}&page=${index}`, { headers: headersToSend });
+          Array.prototype.push.apply(data, newPageData);
         }
       }
 
@@ -117,23 +131,21 @@ export class GithubAPI implements IGithubAPI {
     }
   }
 
-  private returnNextPageIfPresent(headers: AxiosResponseHeaders): string | false {
-    const nextToken = '>; rel="next"';
+  private returnPaginationCounter(headers: AxiosResponseHeaders): number {
+    const lastToken = '>; rel="last"';
 
-    if (!headers?.link || !headers?.link.includes(nextToken)) {
-      return '';
+    if (!headers?.link || !headers?.link.includes(lastToken)) {
+      return 0;
     }
 
-    const nextPageUrl = headers.link
+    const count = headers.link
     .split(',')
-    .filter('rel="next"')[0]
-    .slice(1, nextToken.length);
+    .filter((part: string) => part.includes(lastToken))[0]
+    .slice(1, lastToken.length * -1)
+    .split('=')
+    .pop();
 
-    if (nextPageUrl) {
-      return nextPageUrl;
-    }
-
-    return false;
+    return parseInt(count);
   }
 }
 
@@ -158,11 +170,11 @@ export type BranchRecord = z.infer<typeof branchRecordSchema>;
 export type UserRepository = z.infer<typeof userRepoSchema>;
 export type RepositoryBranch = z.infer<typeof userRepoBranchSchema>;
 type IGithubService = {
-  getUserRepository: (username: GithubUsername) => Promise<UserRepository[]>;
+  getUserRepository: (username: GithubUsername, accessToken?: string) => Promise<UserRepository[]>;
 };
 type IGithubAPI = {
-  getUserRepository: (username: GithubUsername, reposPerPage?: number) => Promise<RepositoryRecord[]>;
-  getRepositoryBranches: (username: GithubUsername, repoName: GithubRepositoryName, branchesPerPage?: number) => Promise<BranchRecord[]>;
+  getUserRepository: (username: GithubUsername, accessToken?: string, reposPerPage?: number) => Promise<RepositoryRecord[]>;
+  getRepositoryBranches: (username: GithubUsername, repoName: GithubRepositoryName, accessToken?: string, branchesPerPage?: number) => Promise<BranchRecord[]>;
 };
 type GithubUsername = z.infer<typeof githubUsernameSchema>;
 type GithubRepositoryName = z.infer<typeof githubRepositoryNameSchema>;

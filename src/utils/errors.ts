@@ -35,3 +35,7 @@ export class HttpRequestError extends CustomError {
 export class ServiceError extends CustomError {
   name = 'ServiceError';
 }
+
+export class ApiError extends CustomError {
+  name = 'ApiError';
+}

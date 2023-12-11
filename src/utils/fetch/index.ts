@@ -12,11 +12,10 @@ const headersSchema = z.object({});
 
 export type IHeaders = z.infer<typeof headersSchema>;
 
-export async function makeGetRequest(url: IURL, headers?: IHeaders): Promise<AxiosResponse> {
+export async function makeGetRequest(url: IURL, headers: IHeaders = {}): Promise<AxiosResponse> {
   try {
-    const result = axios.get(url, {
-      headers: headers ?? {},
-    });
+    const result = await axios.get(url, headers);
+
     return result;
   } catch (error) {
     logger.error('Failed to make GET request', { data: url });

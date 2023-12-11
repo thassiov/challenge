@@ -1,4 +1,4 @@
-import axios, { AxiosResponse } from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 
 import { z } from 'zod';
 import { logger } from '../logger';
@@ -18,7 +18,8 @@ export async function makeGetRequest(url: IURL, headers: IHeaders = {}): Promise
 
     return result;
   } catch (error) {
-    logger.error('Failed to make GET request', { data: url });
-    throw new HttpRequestError('Cannot make GET request', { data: url }, error as Error);
+    const statusCode = (error as AxiosError).response?.status;
+    logger.error(`Failed to make GET request: statusCode: ${statusCode}`, { data: url });
+    throw new HttpRequestError(`Cannot make GET request: statusCode: ${statusCode}`, { data: url }, error as Error);
   }
 }

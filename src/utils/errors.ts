@@ -12,6 +12,9 @@ export class CustomError extends Error {
 
     if (cause) {
       this.cause = cause;
+      if (cause.message) {
+        this.message += `: ${cause.message}`;
+      }
     }
   }
 }

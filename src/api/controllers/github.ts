@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { logger } from "../../utils/logger";
-import { ApiError } from "../../utils/errors";
+import { ApiError, CustomError } from "../../utils/errors";
 import { GithubService } from "../../services";
 import { UserRepository } from "../../services/github";
 
@@ -33,6 +33,13 @@ export async function githubHandler(req: Request, res: Response): Promise<void> 
     res.status(200);
     res.send({ data: userRepoList });
   } catch (error) {
+    if (error instanceof CustomError) {
+      if ((error as Error).message.includes('statusCode: 404')) {
+        res.status(404);
+        res.json({ Message: 'user not found', status: 404 });
+      }
+    }
+
     logger.error(`An error occurred during the processing of the request`, { data: JSON.stringify(req.headers) });
     throw new ApiError(`An error occurred during the processing of the request: ${(error as Error).message}`, { data: JSON.stringify(req.headers) }, error as Error);
   }
